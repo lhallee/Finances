@@ -77,7 +77,7 @@ def test_expiring_obligations_increase_future_saving_and_are_reserved():
     values[:, :, METRICS.index('medical_out_of_pocket')] = 150
     result = project_retirement(values, config, Scenario(births=(2029,), stop_after_birth=1))
     assert np.all(result.projected_annual_saving_after_obligations_real > result.projected_annual_saving_real + 5000)
-    assert result.retirement_budget_model.eq('lifecycle_v2').all()
+    assert result.retirement_budget_model.eq('lifecycle_v3').all()
 
 
 def test_future_college_cost_does_not_disappear_at_early_retirement():

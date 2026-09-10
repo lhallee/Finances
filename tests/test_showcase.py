@@ -47,3 +47,14 @@ def test_incomplete_figures_do_not_replace_latest(tmp_path):
     broken = make_report(tmp_path, "broken", 2000)
     (broken / "figures/01_net_worth.png").unlink()
     assert update_showcase(tmp_path) == older
+
+
+def test_selected_catalog_is_not_labeled_as_entire_preset(tmp_path):
+    (tmp_path / 'README.md').write_text('# Example\n')
+    folder = make_report(tmp_path, 'selected', 2000)
+    path = folder / 'manifest.json'
+    manifest = json.loads(path.read_text())
+    manifest['selection']['explicit'] = [{'scenario_id': 'example'}]
+    path.write_text(json.dumps(manifest))
+    update_showcase(tmp_path)
+    assert '(explicit selection)' in (tmp_path / 'README.md').read_text()

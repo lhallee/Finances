@@ -102,7 +102,8 @@ def support_outcomes(result: SimulationResult, config: RunConfig, scenario: Scen
 
 
 def support_statistics(paths: pd.DataFrame, retirement_age: float, risk_budget: float = .05,
-                       requirements: tuple[str, ...] = ("retirement", "bills", "reserve")) -> pd.DataFrame:
+                       requirements: tuple[str, ...] = ("retirement", "bills", "reserve"),
+                       minimum_paths: int = 32) -> pd.DataFrame:
     """One independent trial per paired path, ORed over every choice in its scope."""
     frame = paths.assign(retirement_failure=paths.retirement_age > retirement_age)
     if not requirements or set(requirements) - {"retirement", "bills", "reserve"}:
@@ -125,7 +126,7 @@ def support_statistics(paths: pd.DataFrame, retirement_age: float, risk_budget: 
     upper = np.where(k < n, beta.ppf(1-alpha, k+1, n-k), 1.)
     stats["success_probability"] = 1-k/n
     stats["success_lower_simultaneous_95"] = 1-upper
-    stats["meets_target"] = (upper <= risk_budget) & (n >= 32)
+    stats["meets_target"] = (upper <= risk_budget) & (n >= minimum_paths)
     stats["supported_salary_2026"] = np.nan
     for _, group in stats.groupby(["dimension", "choice"]):
         ordered = group.sort_values("salary_2026")
@@ -182,11 +183,11 @@ def run_salary_support(config: RunConfig, folder: Path, resume: bool = False, pr
             for source in sorted(Path(__file__).parent.glob("*.py")):
                 archive.write(source, f"finance_sim/{source.name}")
         manifest = {"kind": "salary_support", "status": "running", "fingerprint": fingerprint,
-                    "retirement_budget_model": "lifecycle_v2",
+                    "retirement_budget_model": "lifecycle_v3",
                     "company_support": policy.company_support,
                     "created_utc": pd.Timestamp.now(tz="UTC").isoformat(), "retirement_age": policy.retirement_age,
                     "retirement_funding_target": config.retirement.success_target, "retirement_life_expectancy": config.retirement.life_expectancy,
-                    "risk_budget": config.decision_risk_budget, "reserve_months": policy.reserve_months,
+                    "risk_budget": config.decision_risk_budget, "minimum_paths": config.decision_minimum_paths, "reserve_months": policy.reserve_months,
                     "paths_per_configuration": config.paths, "salaries_2026": list(policy.salaries),
                     "expected_configurations": len(cases), "expected_salary_configurations": len(cases)*len(policy.salaries),
                     "completed_salary_configurations": 0, "parts": [], "runtime_seconds": 0.,
@@ -248,7 +249,8 @@ def run_salary_support(config: RunConfig, folder: Path, resume: bool = False, pr
         write_json(manifest_path, manifest)
         progress(f"Saved ${salary:,.0f}: {manifest['completed_salary_configurations']:,}/{manifest['expected_salary_configurations']:,} salary/configuration tests", flush=True)
     retained = pd.concat([pd.read_parquet(folder / part["paths"]) for part in manifest["parts"]], ignore_index=True)
-    stats = support_statistics(retained, policy.retirement_age, config.decision_risk_budget)
+    stats = support_statistics(retained, policy.retirement_age, config.decision_risk_budget,
+                               minimum_paths=config.decision_minimum_paths)
     stats.to_csv(folder / "support_trends.csv", index=False)
     manifest["status"] = "complete"
     manifest["runtime_seconds"] = prior_time + time.perf_counter()-start

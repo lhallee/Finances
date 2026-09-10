@@ -22,6 +22,31 @@ BUSINESS_COLUMNS = ("founder_pay", "company_cash", "revenue", "operating_cost", 
 BUSINESS = namedtuple("BusinessColumns", BUSINESS_COLUMNS)(*range(len(BUSINESS_COLUMNS)))
 
 
+@njit(cache=True)
+def funded_cost_ratio(cost: float, cash: float, reimbursements: float,
+                      claims: np.ndarray, restricted: np.ndarray) -> float:
+    """Finance spending without releasing one project's advance for another.
+
+    Every release is bounded by that project's actual proportional spending.
+    Solve only the scarce-advance case; ordinary reimbursements use arithmetic.
+    """
+    available = max(0., cash)
+    unfunded_cost = max(0., cost - reimbursements)
+    if np.sum(restricted) == 0:
+        return min(1., available / max(1e-12, unfunded_cost))
+    if unfunded_cost <= available + np.minimum(restricted, claims).sum():
+        return 1.
+    low, high = 0., 1.
+    for _ in range(48):
+        middle = (low + high) / 2
+        releases = np.minimum(restricted, claims * middle).sum()
+        if unfunded_cost * middle <= available + releases:
+            low = middle
+        else:
+            high = middle
+    return low
+
+
 def pack_business(config: RunConfig, scenario: Scenario) -> tuple:
     b = config.business
     dates = monthly_dates(config)
@@ -93,7 +118,7 @@ def company_kernel(schedule: np.ndarray, draws: np.ndarray, grants: np.ndarray,
         remaining = grants[:, 0].copy()  # (g,)
         awarded = np.ones(len(grants))  # (g,)
         delays = np.zeros(len(grants), dtype=np.int64)  # (g,)
-        restricted = 0.0
+        restricted = np.zeros(len(grants))  # Each advance remains project-specific.
         advisor_scale = 1.0
         for g in range(len(grants)):
             u = draws[path, g % t, 7]
@@ -183,7 +208,6 @@ def company_kernel(schedule: np.ndarray, draws: np.ndarray, grants: np.ndarray,
             planned_cost = overhead + direct + hires + desired_pay * (1 + values.payroll_load) + revenue * (1 - values.gross_margin)
             claims = np.zeros(len(grants))  # (g,)
             immediate_claims = 0.
-            advanced = 0.
             for g in range(len(grants)):
                 start, duration = int(grants[g, 1]), int(grants[g, 2])
                 if awarded[g] and active and start <= m < start + duration:
@@ -191,7 +215,7 @@ def company_kernel(schedule: np.ndarray, draws: np.ndarray, grants: np.ndarray,
                     eligible = (grants[g, 8] * inflation * capacity_scale + allocated_pay * (1 + values.payroll_load)) * (1 + grants[g, 7]) * (1 - grants[g, 6])
                     claims[g] = min(remaining[g], eligible, grants[g, 0] / duration)
                     if np.sum(milestones[g]) > 0:
-                        advanced += grants[g, 0] * milestones[g, m]
+                        restricted[g] += grants[g, 0] * milestones[g, m]
                     elif delays[g] == 0:
                         immediate_claims += claims[g]
             # Every claim must be backed by actual total spending, including overhead.
@@ -200,24 +224,22 @@ def company_kernel(schedule: np.ndarray, draws: np.ndarray, grants: np.ndarray,
             immediate_claims *= claim_scale
             # Restricted advances finance only eligible costs. Proportional spending
             # solves same-month reimbursement without claims for unfunded expenses.
-            restricted += advanced
-            restricted_use = min(restricted, np.sum(claims))
-            available = max(0., cash + revenue + grant_cash + restricted_use)
-            ratio = min(1., available / max(1e-12, planned_cost - immediate_claims))
+            ratio = funded_cost_ratio(planned_cost, cash + revenue + grant_cash,
+                                      immediate_claims, claims, restricted)
             total_claims = 0.
             for g in range(len(grants)):
                 claim = claims[g] * ratio
                 remaining[g] -= claim
                 total_claims += claim
+                released = min(restricted[g], claim)
+                restricted[g] -= released
+                grant_cash += released
                 if np.sum(milestones[g]) == 0:
                     receipt_month = m + delays[g]
                     if receipt_month == m:
                         grant_cash += claim
                     elif receipt_month < len(future_receipts):
                         future_receipts[receipt_month] += claim
-            restricted_use = min(restricted, total_claims)
-            restricted -= restricted_use
-            grant_cash += restricted_use
             cost = planned_cost * ratio
             founder_pay = desired_pay * ratio
             arrears += max(0., desired_pay - founder_pay)
@@ -262,7 +284,8 @@ def company_kernel(schedule: np.ndarray, draws: np.ndarray, grants: np.ndarray,
                         escrow[due, 3] += exit_basis * fraction
                 retained_salary = annual_salary
                 future_receipts[:] = 0.
-                restricted, arrears = 0., 0.
+                restricted[:] = 0.
+                arrears = 0.
                 exited = True
                 cash, royalties, firm_value = 0., 0., 0.
             receivables = np.sum(future_receipts[m + 1:])
@@ -274,7 +297,7 @@ def company_kernel(schedule: np.ndarray, draws: np.ndarray, grants: np.ndarray,
             output[path, m] = (founder_pay, cash, revenue, cost, grant_cash, financing, share,
                                equity_cash, ordinary_cash, excluded, arrears, distribution,
                                (1.0 if corporate else 0.0), firm_value * share, advisor_pay, gross_exit,
-                               total_claims, staff, restricted, receivables, company_tax, recovered_basis, darpa_awarded)  # (21,)
+                               total_claims, staff, np.sum(restricted), receivables, company_tax, recovered_basis, darpa_awarded)  # (21,)
     return output  # (p, t, 21)
 
 

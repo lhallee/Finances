@@ -96,6 +96,11 @@ def project_retirement(household: np.ndarray, config: RunConfig, scenario=None) 
     taxable_fraction = np.divide(prior_broker, prior_broker + prior_retirement, out=np.zeros_like(prior_broker), where=prior_broker + prior_retirement > 0)
     broker_flow = series('brokerage') - prior_broker - series('investment_return') * taxable_fraction
     saving = cash_change - series("cash_interest") - series("exit_cash") + broker_flow
+    # Billed costs are included in the lifetime budget even when not paid. Their
+    # liability growth must reduce saving, or expenses fabricate future income.
+    # The same accrual adjustment makes April tax settlement timing neutral.
+    for liability in ("unpaid_bills", "tax_payable"):
+        saving -= np.diff(series(liability), axis=1, prepend=series(liability)[:, :1])
     saving += (series("employee_retirement") + series("employer_retirement")) * (1 - policy.withdrawal_tax_rate)
     annual_saving = (saving[:, 3:] / inflation[:, 3:]).reshape(paths, years, 12).sum(axis=2)  # (paths, years)
     recurring_saving = np.median(annual_saving[:, -min(3, years):], axis=1)  # (paths,)
@@ -122,4 +127,4 @@ def project_retirement(household: np.ndarray, config: RunConfig, scenario=None) 
                          "retirement_required_capital_real": required_at_retirement,
                          "projected_annual_saving_real": recurring_saving,
                          "projected_annual_saving_after_obligations_real": resources - budget.working_spending[:, -1],
-                         "retirement_budget_model": "lifecycle_v2"})
+                         "retirement_budget_model": "lifecycle_v3"})

@@ -60,7 +60,7 @@ def inspect_scenario(record: pd.Series, folder: Path) -> None:
         first.metric('Median earliest retirement age', f'{age:.1f}' if pd.notna(age) else f'Not reached by {int(record.retirement_maximum_age)}')
         second.metric('Ready within simulation', f'{record.retirement_within_horizon_probability:.0%}')
         third.metric('Ready by maximum age', f'{record.retirement_reached_probability:.0%}')
-        st.caption('Retirement ages refer to Logan, assuming both adults stop working. Ages beyond 2036 are conditional projections; unresolved paths remain in the median. Retirement assumptions are in the saved inputs.')
+        st.caption('Retirement ages refer to Logan, assuming both adults stop working. Ages beyond 2036 are conditional projections; unresolved paths remain in the median. Deficit recovery is approximate, so retirement ages on deficit paths remain provisional. Retirement assumptions are in the saved inputs.')
     fields = ('career', 'career_year', 'location', 'move_year', 'housing', 'marriage_year', 'births', 'stop_after_birth',
               'amanda_career', 'macro', 'benefits', 'company_mode', 'company_outcome', 'grants', 'grant_case', 'exit_value', 'exit_year', 'exit_type')
     left, right = st.columns(2)
@@ -69,6 +69,13 @@ def inspect_scenario(record: pd.Series, folder: Path) -> None:
     with right:
         st.dataframe(event_timeline(scenario_from_record(record.to_dict()), load_config(folder / 'config.json')), hide_index=True, use_container_width=True)
         st.caption('The timeline shows scheduled events. Actual job gaps, purchases and payments vary between stochastic paths; a median line is not an individual path.')
+
+
+def reset_filters() -> None:
+    st.session_state['filter_epoch'] = st.session_state.get('filter_epoch', 0) + 1
+    for key in list(st.session_state):
+        if key.startswith('filter-') or key.startswith('clicked-'):
+            del st.session_state[key]
 
 
 def main() -> None:
@@ -81,7 +88,7 @@ def main() -> None:
     button:focus-visible,a:focus-visible {outline:3px solid #b38335!important}
     </style>''', unsafe_allow_html=True)
     st.title('Possible futures')
-    st.caption('Household finances · 2027–2036 · Every scenario, one view')
+    st.caption('Household finances · 2027–2036 · Every saved scenario, one view')
     with st.sidebar.expander('Saved results'):
         folder = Path(st.text_input('Output folder', value=arguments().output)).expanduser().resolve()
         if st.button('Refresh results'):
@@ -91,11 +98,20 @@ def main() -> None:
         st.info('Choose a simulation output folder to explore its results.')
         st.code('python simulate.py --preset demo --output outputs/demo')
         return
-    manifest = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
+    try:
+        manifest = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
+        if manifest.get('schema_version') != 1:
+            raise ValueError('Unsupported run schema. Open a run created by this simulator.')
+        summary = load_summary(str(folder), manifest['completed_scenarios'])
+    except (OSError, ValueError, KeyError) as error:
+        st.error(f'Cannot open these results: {error}')
+        st.info('Choose another output folder, or check the saved run with python validate_run.py --output <folder>.')
+        return
     revision = manifest['completed_scenarios']
+    if manifest.get('retirement_budget_model') != 'lifecycle_v3':
+        st.warning('Older retirement calculation. Rerun with the current engine before relying on retirement ages; unpaid bills and taxes were not fully reflected in projected saving capacity.')
     if manifest['status'] != 'complete':
         st.warning(f"This run is incomplete: {revision:,} of {manifest['expected_scenarios']:,} scenarios saved.")
-    summary = load_summary(str(folder), revision)
     if summary.empty:
         st.info('Waiting for the first committed batch.')
         return
@@ -103,6 +119,8 @@ def main() -> None:
     with st.sidebar:
         st.subheader('Keep the possibilities you want')
         st.caption('Removing an option removes its trajectories immediately.')
+        st.button('Reset all filters', on_click=reset_filters)
+        filter_prefix = f"filter-{st.session_state.get('filter_epoch', 0)}-{folder}"
         primary = (('career', "Logan's career"), ('location', 'Location'), ('children', 'Children'),
                    ('stop_after_birth', "Amanda's employment"), ('macro', 'Economic scenario'))
         secondary = (('housing', 'Housing'), ('benefits', 'UD benefits'), ('company_outcome', 'Company outcome'),
@@ -112,19 +130,20 @@ def main() -> None:
         for key, label in primary:
             if key == 'career':
                 options = sorted(summary.career.map(career_group).unique().tolist())
-                chosen = st.multiselect(label, options, default=options)
+                chosen = st.multiselect(label, options, default=options, key=f'{filter_prefix}-{key}')
                 filtered = filtered[filtered.career.map(career_group).isin(chosen)]
             else:
                 options = sorted(summary[key].dropna().unique().tolist())
-                chosen = st.multiselect(label, options, default=options, format_func=lambda value, field=key: option_name(field, value))
+                chosen = st.multiselect(label, options, default=options, key=f'{filter_prefix}-{key}', format_func=lambda value, field=key: option_name(field, value))
                 filtered = filtered[filtered[key].isin(chosen)]
         with st.expander('More options'):
             for key, label in secondary:
                 options = sorted(summary[key].dropna().unique().tolist())
-                chosen = st.multiselect(label, options, default=options, format_func=lambda value, field=key: option_name(field, value))
+                chosen = st.multiselect(label, options, default=options, key=f'{filter_prefix}-{key}', format_func=lambda value, field=key: option_name(field, value))
                 filtered = filtered[filtered[key].isin(chosen)]
     if filtered.empty:
         st.info('No saved scenarios match. Add an option back to see trajectories.')
+        show_salary_support(Path(__file__).parent / 'outputs')
         return
     first, second, third = st.columns([2, 1, 1])
     with first:
@@ -135,6 +154,9 @@ def main() -> None:
         scale = st.selectbox('Dollar scale', ['Balanced', 'Linear'], help='Balanced compresses large values while preserving zero and negative balances. Linear shows equal dollar distances.')
     st.caption(f"{len(filtered):,} / {len(summary):,} scenarios · {int(filtered.paths.sum()):,} stochastic paths · Lines show each scenario's median; no scenarios are sampled.")
     st.caption(f"Dollar basis: {manifest.get('dollar_basis', 'Nominal USD, legacy run. Generate new results for 2026-dollar views.')}")
+    selection = manifest.get('selection', {})
+    scope = 'explicitly selected catalog' if selection.get('explicit') is not None else f"{selection.get('preset', 'saved')} preset"
+    st.caption(f"Run: {folder.name} · {scope} · {summary.location.nunique()} locations · {summary.macro.nunique()} economic narratives. Filters show saved choices only; this is not the full configurable grid.")
     choices = tuple(filtered[['scenario_id', 'career']].itertuples(index=False, name=None))
     key = hashlib.sha256(repr((str(folder), revision, metric, choices, interval, scale)).encode()).hexdigest()[:16]
     with st.spinner('Preparing trajectories...'):
@@ -160,6 +182,8 @@ def main() -> None:
         st.download_button('Download filtered results', filtered.to_csv(index=False), 'filtered_scenarios.csv', 'text/csv')
     with st.expander('Sources and assumptions'):
         st.write('Each line is conditional on its configuration. Monte Carlo ranges quantify modeled uncertainty, not uncertainty in every input assumption.')
+        for limitation in manifest.get('limitations', []):
+            st.markdown(f'- {limitation}')
         st.dataframe(pd.read_json(folder / 'sources.json'), hide_index=True, use_container_width=True)
         st.json(json.loads((folder / 'config.json').read_text(encoding='utf-8')), expanded=False)
 

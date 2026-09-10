@@ -20,6 +20,28 @@ from .scenarios import Scenario, count_scenarios, generate_scenarios
 from .storage import commit_batch, prepare_run, write_json
 
 
+def _finish_reports(config: RunConfig, folder: Path, manifest: dict) -> dict:
+    """Retry reports without repeating committed simulations after a failure."""
+    if not config.generate_reports or manifest.get("reports_status") == "complete":
+        return manifest
+    from .reporting import generate_reports
+    report_start = time.perf_counter()
+    manifest["reports_status"] = "running"
+    write_json(folder / "manifest.json", manifest)
+    try:
+        generate_reports(folder)
+        manifest["reports_status"] = "complete"
+        manifest.pop("report_error", None)
+    except BaseException as error:
+        manifest["reports_status"] = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
+        manifest["report_error"] = str(error)
+        write_json(folder / "manifest.json", manifest)
+        raise
+    manifest["report_seconds"] = time.perf_counter() - report_start
+    write_json(folder / "manifest.json", manifest)
+    return manifest
+
+
 def execute(config: RunConfig, folder: Path, preset: str = "standard", resume: bool = False,
             selected: list[Scenario] | None = None, progress: Callable[[str], None] = print,
             maximum_batches: int | None = None) -> dict:
@@ -29,8 +51,8 @@ def execute(config: RunConfig, folder: Path, preset: str = "standard", resume: b
     count = len(selected) if selected is not None else count_scenarios(config, preset)
     manifest = prepare_run(folder, config, selection, count, resume)
     if manifest["status"] == "complete":
-        progress("This run is already complete.")
-        return manifest
+        progress("Simulation is complete; checking report completion.")
+        return _finish_reports(config, folder, manifest)
     scenarios = iter(selected) if selected is not None else generate_scenarios(config, preset)
     scenarios = itertools.islice(scenarios, manifest["completed_scenarios"], None)
     start = time.perf_counter()
@@ -80,17 +102,4 @@ def execute(config: RunConfig, folder: Path, preset: str = "standard", resume: b
     manifest["status"] = "complete"
     manifest.pop("error", None)
     write_json(folder / "manifest.json", manifest)
-    if config.generate_reports:
-        from .reporting import generate_reports
-        report_start = time.perf_counter()
-        try:
-            generate_reports(folder)
-            manifest["reports_status"] = "complete"
-        except Exception as error:
-            manifest["reports_status"] = "failed"
-            manifest["report_error"] = str(error)
-            write_json(folder / "manifest.json", manifest)
-            raise
-        manifest["report_seconds"] = time.perf_counter() - report_start
-        write_json(folder / "manifest.json", manifest)
-    return manifest
+    return _finish_reports(config, folder, manifest)

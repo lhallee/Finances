@@ -1,11 +1,11 @@
 {
-  "run": "outputs/decision-validation-2026-09-10",
-  "report_completed_utc": "2026-09-10T20:29:37.595487+00:00",
-  "preset": "standard",
+  "run": "outputs/decision-audited-2026-09-10",
+  "report_completed_utc": "2026-09-10T22:07:23.991683+00:00",
+  "preset": "explicit selection",
   "scenarios": 5742,
   "paths_per_scenario": 256,
   "total_paths": 1469952,
-  "simulation_and_storage_seconds": 423.734485700028,
-  "report_seconds": 34.49271280015819,
+  "simulation_and_storage_seconds": 499.6627726999577,
+  "report_seconds": 58.178819899912924,
   "figure_count": 27
 }

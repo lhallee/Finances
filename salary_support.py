@@ -18,12 +18,13 @@ def main():
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     config = load_config(args.config)
-    if args.paths:
+    if args.paths is not None:
         config.paths = args.paths
-    if args.threads:
+    if args.threads is not None:
         config.threads = args.threads
     if args.company_support:
         config.salary_support.company_support = args.company_support
+    config.validate()
     count = len(support_scenarios(config))
     tests = count * len(config.salary_support.salaries)
     print(f"{count:,} life configurations x {len(config.salary_support.salaries)} fixed salaries x {config.paths:,} paths = {tests*config.paths:,} path simulations.", flush=True)

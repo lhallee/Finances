@@ -39,7 +39,20 @@ def test_app_filters_ranges_and_details(tmp_path):
     assert len(app.get('download_button')) == 1
     next(item for item in app.multiselect if item.label == "Amanda's employment").set_value([]).run(timeout=60)
     assert any('No saved scenarios match' in item.value for item in app.info)
+    next(item for item in app.button if item.label == 'Reset all filters').click().run(timeout=60)
+    assert not app.exception
+    assert any('2 / 2 scenarios' in item.value for item in app.caption)
     assert (folder / 'manifest.json').read_bytes() == original
+    app.run(timeout=60)
+    assert any('2 / 2 scenarios' in item.value for item in app.caption)
+
+
+def test_app_explains_invalid_results(tmp_path):
+    (tmp_path / 'manifest.json').write_text('{bad json')
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py')).run(timeout=60)
+    app.text_input[0].set_value(str(tmp_path)).run(timeout=60)
+    assert not app.exception
+    assert any('Cannot open' in item.value for item in app.error)
 
 
 def test_app_partial_run(tmp_path):

@@ -9,7 +9,7 @@ import json
 from dataclasses import asdict, dataclass, replace
 from collections.abc import Iterator
 
-from .configuration import RunConfig
+from .configuration import RunConfig, validate_grid_axes
 from .reference import AMANDA_FACTORS, CAREER_SALARY, LOCATIONS, MACROS
 
 
@@ -77,6 +77,7 @@ def compatible(career: str, location: str) -> bool:
 
 
 def validate_grid(config: RunConfig) -> None:
+    validate_grid_axes(config.grid)
     for selected, supported, label in ((config.grid.careers, CAREER_SALARY, "career"),
                                      (config.grid.locations, LOCATIONS, "location"),
                                      (config.grid.macros, MACROS, "macro"),
@@ -86,6 +87,27 @@ def validate_grid(config: RunConfig) -> None:
     names = {g.name for g in config.business.grants}
     if any(set(p) - names for p in config.grid.funding_portfolios):
         raise ValueError("Funding portfolio references an undefined grant")
+
+
+def validate_base_schema(config: RunConfig, name: str, settings: dict) -> None:
+    """A typo in an editable schema must never silently select a default."""
+    unknown = set(settings) - set(Scenario.__dataclass_fields__)
+    if unknown:
+        raise ValueError(f"Unknown fields in base schema {name}: {sorted(unknown)}")
+    base = scenario_from_record(settings)
+    choices = {"career": CAREER_SALARY, "location": LOCATIONS, "macro": MACROS,
+               "amanda_career": AMANDA_FACTORS, "housing": ("free", "rent", "buy"),
+               "benefits": ("retained", "lost"), "company_mode": ("direct", "business"),
+               "company_outcome": ("dormant", "saas", "licensing", "hybrid", "vc", "failure"),
+               "grant_case": ("awarded", "delayed", "reduced", "failed"),
+               "exit_type": ("equity", "asset"), "prior_career": ("ud", "ud_blend")}
+    for field, supported in choices.items():
+        if getattr(base, field) not in supported:
+            raise ValueError(f"Unknown {field} in base schema {name}: {getattr(base, field)}")
+    if set(base.grants) - {grant.name for grant in config.business.grants}:
+        raise ValueError(f"Undefined grant in base schema {name}")
+    if len(base.grants) != len(set(base.grants)):
+        raise ValueError(f"Duplicate grants in base schema {name}")
 
 
 def count_scenarios(config: RunConfig, preset: str = "standard") -> int:
@@ -130,6 +152,7 @@ def standard_bases(config: RunConfig) -> Iterator[Scenario]:
     if not years or any(year not in config.grid.years for year in years):
         raise ValueError("Practical transition years must be within grid.years")
     for name, settings in config.grid.base_schemas.items():
+        validate_base_schema(config, name, settings)
         base = scenario_from_record(settings)
         locations = config.grid.locations if config.grid.independent_career_locations else (base.location,)
         for location in locations:

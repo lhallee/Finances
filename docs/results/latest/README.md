@@ -1,6 +1,6 @@
 # Latest simulation figures
 
-Source run: `outputs/decision-validation-2026-09-10`.
+Source run: `outputs/decision-audited-2026-09-10`.
 
 Conditional simulation results with provisional assumptions, not a probability-weighted forecast. Trajectory bands are marginal percentiles; company charts use one actual path. Figures can cover different scenario subsets, described in their captions.
 

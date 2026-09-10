@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import zipfile
 
 import pandas as pd
 import pytest
@@ -40,3 +41,44 @@ def test_existing_run_not_overwritten(tmp_path):
     execute(config, tmp_path / "run", preset="baseline")
     with pytest.raises(FileExistsError):
         execute(config, tmp_path / "run", preset="baseline")
+
+
+def test_resume_recovers_failed_reports_without_resimulation(tmp_path, monkeypatch):
+    config = RunConfig(paths=2, threads=2)
+    folder = tmp_path / "run"
+
+    def fail_report(folder):
+        raise RuntimeError("report interrupted")
+
+    monkeypatch.setattr("finance_sim.reporting.generate_reports", fail_report)
+    with pytest.raises(RuntimeError, match="report interrupted"):
+        execute(config, folder, preset="baseline")
+    before = json.loads((folder / "manifest.json").read_text())
+    assert before["status"] == "complete" and before["reports_status"] == "failed"
+
+    def reject_simulation(*args):
+        pytest.fail("Completed simulation was repeated")
+
+    reports = []
+    monkeypatch.setattr("finance_sim.workflow.simulate", reject_simulation)
+    monkeypatch.setattr("finance_sim.reporting.generate_reports", reports.append)
+    after = execute(config, folder, preset="baseline", resume=True)
+    assert reports == [folder]
+    assert after["reports_status"] == "complete" and "report_error" not in after
+    assert after["parts"] == before["parts"]
+    assert after["runtime_seconds"] == before["runtime_seconds"]
+    execute(config, folder, preset="baseline", resume=True)
+    assert reports == [folder]
+
+
+def test_completed_resume_checks_partitions_and_archives_entrypoints(tmp_path):
+    config = RunConfig(paths=2, threads=2, generate_reports=False)
+    folder = tmp_path / "run"
+    manifest = execute(config, folder, preset="baseline")
+    with zipfile.ZipFile(folder / "engine_source.zip") as archive:
+        assert {"app.py", "dashboard_insights.py", "salary_support.py"} <= set(archive.namelist())
+        assert "config.py" not in archive.namelist()
+    partition = folder / "terminal" / manifest["parts"][0]["file"]
+    partition.write_bytes(b"corrupted")
+    with pytest.raises(ValueError, match="missing or corrupted"):
+        execute(config, folder, preset="baseline", resume=True)

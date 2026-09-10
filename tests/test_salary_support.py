@@ -109,6 +109,7 @@ def test_age_target_union_and_nonmonotonic_salary_thresholds():
     assert stats.supported_salary_2026.eq(500000).all()  # Passing 300k does not hide failing 400k.
     assert stats.independent_paths.eq(256).all()  # Never 256,000 correlated scenario-path trials.
     assert support_statistics(paths, retirement_age=75).supported_salary_2026.eq(200000).all()
+    assert support_statistics(paths, retirement_age=75, minimum_paths=512).supported_salary_2026.isna().all()
     paths.loc[paths.salary_2026 == 500000, 'reserve_failure'] = True
     assert support_statistics(paths, retirement_age=60).supported_salary_2026.isna().all()
 
@@ -189,3 +190,13 @@ def test_salary_panel_recalculates_requirements_without_simulation(tmp_path, mon
     app.run(timeout=60)
     assert app.metric[0].value == 'Computing'
     assert any('withheld' in item.value for item in app.info)
+    metadata['status'] = 'complete'
+    metadata['fingerprint'] = 'noisy-test'
+    noisy = pd.concat(frames)
+    noisy.loc[noisy.path_id < 10, 'retirement_age'] = 79.
+    noisy.to_parquet(folder / 'paths.parquet')
+    manifest.write_text(json.dumps(metadata))
+    app.run(timeout=60)
+    assert not app.exception
+    assert app.metric[0].value == 'More paths needed'
+    assert any('sampling precision' in item.value for item in app.info)

@@ -51,8 +51,6 @@ def prepare_run(folder: Path, config: RunConfig, selection: dict, count: int, re
             raise FileExistsError("Output already contains a run. Use --resume or a new folder.")
         if manifest["input_hash"] != fingerprint or manifest["code_hash"] != code:
             raise ValueError("Cannot resume with changed inputs, history, selection, or engine code")
-        if manifest["status"] == "complete":
-            return manifest
         for part in manifest["parts"]:
             for kind in ("summary", "terminal", "monthly"):
                 path = folder / kind / part["file"]
@@ -80,10 +78,10 @@ def prepare_run(folder: Path, config: RunConfig, selection: dict, count: int, re
     with zipfile.ZipFile(folder / "engine_source.zip", "w", zipfile.ZIP_DEFLATED) as archive:
         for source in sorted((root / "finance_sim").glob("*.py")):
             archive.write(source, source.relative_to(root))
-        for name in ("simulate.py", "forecast.py", "app.py", "showcase.py", "dashboard_charts.py", "display_names.py", "scenario_details.py", "requirements.txt"):
+        for name in ("simulate.py", "salary_support.py", "forecast.py", "app.py", "showcase.py", "dashboard_charts.py", "dashboard_insights.py", "display_names.py", "scenario_details.py", "requirements.txt"):
             archive.write(root / name, name)
     write_json(folder / "locations.json", {key: vars(value) for key, value in LOCATIONS.items()})
-    manifest = {"retirement_budget_model": "lifecycle_v2", "dollar_basis": "2026 USD", "monthly_units": "pathwise deflated before quantiles", "ledger_units": "nominal accounting USD", "schema_version": SCHEMA_VERSION, "status": "running", "created_utc": datetime.now(timezone.utc).isoformat(),
+    manifest = {"retirement_budget_model": "lifecycle_v3", "dollar_basis": "2026 USD", "monthly_units": "pathwise deflated before quantiles", "ledger_units": "nominal accounting USD", "schema_version": SCHEMA_VERSION, "status": "running", "created_utc": datetime.now(timezone.utc).isoformat(),
                 "expected_scenarios": count, "completed_scenarios": 0, "parts": [], "selection": selection,
                 "input_hash": fingerprint, "code_hash": code, "history_hash": history_fingerprint(config),
                 "python": platform.python_version(), "limitations": LIMITATIONS, "runtime_seconds": 0.,

@@ -68,7 +68,7 @@ def latest_report(outputs: Path) -> CompletedReport | None:
         completed_at = datetime.fromtimestamp(manifest_path.stat().st_mtime, timezone.utc)
         reports.append(CompletedReport(
             folder, completed_at, int(manifest["completed_scenarios"]), int(config["paths"]),
-            str(manifest["selection"]["preset"]), float(manifest["runtime_seconds"]),
+            'explicit selection' if manifest['selection'].get('explicit') is not None else str(manifest["selection"]["preset"]), float(manifest["runtime_seconds"]),
             float(manifest.get("report_seconds", 0)), figures,
         ))
     return max(reports, key=lambda run: (run.completed_at, run.folder.as_posix())) if reports else None
@@ -118,8 +118,9 @@ def update_showcase(repo: Path | None = None) -> Path | None:
                         "", figure.description, ""])
     (destination / "README.md").write_text("\n".join(gallery), encoding="utf-8")
 
+    selection_label = report.preset if report.preset == 'explicit selection' else f'{report.preset} preset'
     lines = [START, "## Latest results", "",
-             f"Latest completed report: **`{relative_run}`** ({report.preset} preset), "
+             f"Latest completed report: **`{relative_run}`** ({selection_label}), "
              f"updated **{report.completed_at:%Y-%m-%d %H:%M UTC}**.", "",
              "| Scenarios | Paths per scenario | Total paths | Simulation + storage | Reports | Figures |",
              "| ---: | ---: | ---: | ---: | ---: | ---: |",

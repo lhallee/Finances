@@ -34,8 +34,8 @@ def show_risk_trends(summary: pd.DataFrame) -> None:
         labels = [option_name(dimension, v) for v in trend[dimension]]
         fig = go.Figure(go.Bar(x=labels, y=trend.average_risk, name='Average conditional risk', marker_color='#b38335',
                               customdata=trend.configurations, hovertemplate='%{x}<br>Average risk %{y:.1%}<br>%{customdata} configurations<extra></extra>'))
-        fig.add_trace(go.Scatter(x=labels, y=trend.p10_configuration_risk, mode='markers', name='10th percentile across configurations', marker=dict(color='#397c69', symbol='line-ew', size=14)))
-        fig.add_trace(go.Scatter(x=labels, y=trend.p90_configuration_risk, mode='markers', name='90th percentile across configurations', marker=dict(color='#233d38', symbol='line-ew', size=14)))
+        fig.add_trace(go.Scatter(x=labels, y=trend.p10_configuration_risk, mode='markers', name='10th percentile across configurations', marker=dict(color='#397c69', symbol='triangle-up', size=9)))
+        fig.add_trace(go.Scatter(x=labels, y=trend.p90_configuration_risk, mode='markers', name='90th percentile across configurations', marker=dict(color='#233d38', symbol='triangle-down', size=9)))
         fig.update_layout(height=360, margin=dict(l=10, r=10, t=20, b=70), template='plotly_white',
                           yaxis=dict(title='Depleted funds or unpaid bills', tickformat='.0%', range=[0, 1.04]), legend=dict(orientation='h', y=-.35))
         st.plotly_chart(fig, use_container_width=True, config={'displaylogo': False})
@@ -66,8 +66,8 @@ def load_support(folder: str, fingerprint: str, completed: int) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False, max_entries=8)
 def support_table(folder: str, fingerprint: str, completed: int, age: float, budget: float,
-                  requirements: tuple[str, ...] = ('retirement', 'bills', 'reserve')) -> pd.DataFrame:
-    return support_statistics(load_support(folder, fingerprint, completed), age, budget, requirements)
+                  requirements: tuple[str, ...] = ('retirement', 'bills', 'reserve'), minimum_paths: int = 32) -> pd.DataFrame:
+    return support_statistics(load_support(folder, fingerprint, completed), age, budget, requirements, minimum_paths)
 
 
 @st.fragment
@@ -85,20 +85,24 @@ def show_salary_support(outputs: Path) -> None:
             except (OSError, json.JSONDecodeError):
                 continue
             mode = info.get('company_support', 'none')
-            rank = (info.get('retirement_budget_model') == 'lifecycle_v2', info['status'] == 'complete', path.stat().st_mtime_ns)
+            rank = ({'lifecycle_v3': 2, 'lifecycle_v2': 1}.get(info.get('retirement_budget_model'), 0), info['status'] == 'complete', path.stat().st_mtime_ns)
             if mode not in candidates or rank > candidates[mode][0]:
                 candidates[mode] = (rank, path.parent)
         mode = st.selectbox('Synthyra downside case', sorted(candidates, key=lambda v: v != 'none'),
                             format_func=lambda v: {'none': 'Synthyra pays nothing', 'darpa_only': 'DARPA only, then outside employment'}.get(v, display_name(v)))
         folder = candidates[mode][1]
         metadata = json.loads((folder / 'salary_support.json').read_text())
-        lifecycle = metadata.get('retirement_budget_model') == 'lifecycle_v2'
+        lifecycle = metadata.get('retirement_budget_model') in ('lifecycle_v2', 'lifecycle_v3')
+        if metadata.get('retirement_budget_model') == 'lifecycle_v2':
+            st.warning('Superseded retirement calculation: these results can overstate saving capacity when bills or taxes remain unpaid. Use a lifecycle_v3 run for salary and retirement decisions.')
         if not lifecycle:
             st.warning('Legacy retirement projection: these saved results keep child and mortgage costs indefinitely. Updated lifecycle results will replace this view when available.')
         complete = metadata['status'] == 'complete'
         if not complete:
             st.info(f"Salary-only analysis is running: {metadata['completed_salary_configurations']:,}/{metadata['expected_salary_configurations']:,} salary/configuration tests saved. Thresholds remain withheld until coverage is complete.")
-        st.caption('Additional controlled runs, separate from the observed trends above. Changing requirements only reanalyzes saved results.')
+        st.caption('Independent of the main chart filters. These controlled salary runs test their own saved life choices. Changing requirements only reanalyzes saved results.')
+        coverage = metadata['coverage']
+        st.caption(f"{metadata['expected_configurations']:,} life configurations · {len(coverage['locations'])} locations · {len(coverage['macros'])} economic narratives · {metadata['paths_per_configuration']:,} independent paths. Only the configured birth schedules and marriage year are tested.")
         if mode == 'darpa_only':
             st.write('Only the DARPA award supports Synthyra compensation. The UD/Synthyra split ends when the award period ends, then the tested outside salary begins. No commercial revenue, follow-on funding, distributions or exit proceeds are assumed.')
         else:
@@ -117,14 +121,20 @@ def show_salary_support(outputs: Path) -> None:
         st.caption('Selected requirements must pass together. Bills includes avoiding exhausted liquid funds; the reserve is required after Amanda stops working. Retirement means both adults retire by Logan\'s target age.')
         if not metadata['parts']:
             return
-        stats = support_table(str(folder), metadata['fingerprint'], metadata['completed_salary_configurations'], age, metadata['risk_budget'], requirements)
+        stats = support_table(str(folder), metadata['fingerprint'], metadata['completed_salary_configurations'], age, metadata['risk_budget'], requirements, metadata.get('minimum_paths', 32))
         overall = stats[(stats.dimension == 'overall') & (stats.choice == 'all')].sort_values('salary_2026')
         threshold = overall.supported_salary_2026.iloc[0] if complete else np.nan
-        first, second, third = st.columns(3)
-        first.metric('Lowest supported tested salary', f'${threshold:,.0f}' if pd.notna(threshold) else ('Not reached in grid' if complete else 'Computing'))
+        point_pass = overall.success_probability.ge(1-metadata['risk_budget'])
+        point_candidates = overall.loc[point_pass.iloc[::-1].cummin().iloc[::-1]]
+        sampling_limited = complete and pd.isna(threshold) and not point_candidates.empty
+        first, second, third = st.columns([2, 1, 1])
+        first.metric('Lowest supported tested salary', f'${threshold:,.0f}' if pd.notna(threshold) else ('More paths needed' if sampling_limited else ('Not reached in grid' if complete else 'Computing')))
         second.metric('Required modeled success', f"{1-metadata['risk_budget']:.0%}")
         third.metric('Requirements selected', f'{len(requirements)} of 3')
         st.caption('Starting annual employee salary in 2026 dollars. A threshold requires the simultaneous 95% Monte Carlo lower bound to pass the target at that salary and every higher tested salary. Untested salary points are not interpolated.')
+        if sampling_limited:
+            candidate = point_candidates.iloc[0]
+            st.info(f"The point estimate reaches the target at ${candidate.salary_2026:,.0f}: {candidate.success_probability:.1%} estimated success. The simultaneous lower bound is only {candidate.success_lower_simultaneous_95:.1%} with {int(candidate.independent_paths):,} independent paths. This is insufficient sampling precision to establish the requested threshold, not evidence that the salary cannot work.")
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=overall.salary_2026, y=overall.success_probability, mode='lines+markers', name='Selected requirements: estimated success', line=dict(color='#397c69', width=3)))
         fig.add_trace(go.Scatter(x=overall.salary_2026, y=overall.success_lower_simultaneous_95, mode='lines', name='Simultaneous 95% lower bound', line=dict(color='#b38335', dash='dot')))
@@ -150,6 +160,7 @@ def show_salary_support(outputs: Path) -> None:
             worst = timing.loc[timing.reserve_failure_probability.idxmax()]
             st.write(f"**Move-timing trend at ${chosen.salary_2026:,.0f}:** modeled reserve-failure risk is {worst.reserve_failure_probability:.1%} across the {worst.choice} move cases versus {best.reserve_failure_probability:.1%} across the {best.choice} move cases, testing every other configured choice within each group.")
         if 'retirement' in requirements:
+            st.caption('Beyond 2036, retirement uses a separate long-term return model and inferred saving capacity. It does not extend each economic narrative through age 100. Projected deficit recovery is approximate; retirement ages on deficit paths remain provisional. Housing, benefits and taxes remain planning assumptions.')
             if lifecycle:
                 st.caption('Child support ends after college, mortgage payments end at payoff, and rent or homeowner operating costs continue. Released spending increases projected savings. Remaining temporary obligations are reserved separately at zero real return; the ongoing adult budget uses stochastic portfolio returns.')
             else:
@@ -166,6 +177,13 @@ def show_salary_support(outputs: Path) -> None:
                              yaxis=dict(title='Modeled success', tickformat='.0%', range=[0, 1.04]), legend=dict(orientation='h', y=-.3))
         st.plotly_chart(trends, use_container_width=True, config={'displaylogo': False})
         st.caption('Each line tests every other configured choice within that group. These are matched salary reruns with common economic draws, not salary bins or averages of scenario percentiles. One paired path remains one independent observation even when reused across thousands of choices. The all-choices test requires every tested configuration to succeed on a path, which is stricter than an average success rate.')
+        export = stats.assign(retirement_target_age=age, selected_requirements=','.join(requirements),
+                              run=folder.name, coverage_complete=complete,
+                              interpretation='Conditional all-choice success; main chart filters do not apply')
+        if not complete:
+            export['supported_salary_2026'] = np.nan
+        st.download_button('Download salary analysis', export.to_csv(index=False),
+                           f'salary_analysis_age{age}.csv', 'text/csv')
         if st.checkbox('Show coverage and assumptions for this question'):
             coverage = metadata['coverage']
             st.write(f"Dedicated run: {folder.name}. {metadata['expected_configurations']:,} life configurations, {len(metadata['salaries_2026'])} fixed salaries, {metadata['paths_per_configuration']:,} independent paths each. This section is independent of the main chart filters.")

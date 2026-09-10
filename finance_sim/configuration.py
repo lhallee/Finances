@@ -359,6 +359,7 @@ class RunConfig:
     generate_reports: bool = True
 
     def validate(self) -> None:
+        validate_grid_axes(self.grid)
         support = self.salary_support
         if not support.salaries or any(v <= 0 for v in support.salaries) or list(support.salaries) != sorted(set(support.salaries)):
             raise ValueError("Salary support grid must contain increasing positive salaries")
@@ -404,6 +405,24 @@ class RunConfig:
 
 def config_dict(config: RunConfig) -> dict:
     return json.loads(json.dumps(dataclasses.asdict(config)))
+
+
+def validate_grid_axes(grid: Grid) -> None:
+    """Reject repeated choices before they create duplicate scenario IDs."""
+    names = ("years", "careers", "locations", "housing", "amanda_careers", "company_modes",
+             "company_outcomes", "macros", "exit_values", "exit_types", "funding_portfolios",
+             "grant_cases", "benefits", "practical_transition_years", "practical_marriage_years",
+             "practical_birth_schedules")
+    for name in names:
+        values = getattr(grid, name)
+        encoded = [json.dumps(value, sort_keys=True) for value in values]
+        if len(encoded) != len(set(encoded)):
+            raise ValueError(f"Duplicate choices in grid.{name}; list each option once")
+    if list(grid.years) != sorted(grid.years):
+        raise ValueError("grid.years must be in chronological order")
+    for portfolio in grid.funding_portfolios:
+        if len(portfolio) != len(set(portfolio)):
+            raise ValueError("Duplicate grants within a funding portfolio")
 
 
 def config_from_dict(raw: dict) -> RunConfig:
