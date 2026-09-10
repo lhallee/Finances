@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "household-finance-simulator"
+version = "0.1.0"
+description = "Reproducible household and founder-finance scenario exploration"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24", "scipy>=1.10", "pandas>=2", "numba>=0.59", "pyarrow>=14", "matplotlib>=3.7", "plotly>=5", "streamlit>=1.40", "openpyxl>=3.1"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+gpu = ["cupy-cuda12x>=13"]
+
+[tool.setuptools.packages.find]
+include = ["finance_sim*"]
+
+[tool.setuptools]
+py-modules = ["display_names"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,11 @@
+{
+  "run": "outputs/decision-validation-2026-09-10",
+  "report_completed_utc": "2026-09-10T20:29:37.595487+00:00",
+  "preset": "standard",
+  "scenarios": 5742,
+  "paths_per_scenario": 256,
+  "total_paths": 1469952,
+  "simulation_and_storage_seconds": 423.734485700028,
+  "report_seconds": 34.49271280015819,
+  "figure_count": 27
+}

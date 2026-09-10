@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.nbc
+*.nbi
+.pytest_cache/
+.venv/
+outputs/
+config.py
+PROJECT_CONTEXT.md
+ud/
+*.log
+.streamlit/secrets.toml
+
+inputs/
+data/calibration/
